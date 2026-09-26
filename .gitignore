@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.claude/
+13F Analyzer.exe
+
+# Shared tracked-fund list — keep this out of any public/shared repo by default;
+# it reflects internal research targets, not just sample config.
+data/custom_funds.json
