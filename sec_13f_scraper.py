@@ -87,7 +87,7 @@ def get_submissions(cik):
     return r.json()
 
 
-def get_all_13f_filings(cik):
+def get_all_13f_filings(cik, dedupe=True):
     """Return list of dicts with keys: accessionNumber, filingDate, primaryDocument."""
     data = get_submissions(cik)
     entity_name = data.get('name', cik)
@@ -121,7 +121,8 @@ def get_all_13f_filings(cik):
 
     filings.sort(key=lambda x: x['filingDate'])
 
-    filings = dedupe_by_quarter(filings)
+    if dedupe:
+        filings = dedupe_by_quarter(filings)
 
     print(f'Found {len(filings)} 13F-HR filings.')
 
@@ -946,12 +947,16 @@ def _add_summary_sheet(wb, funds):
         ws.cell(row=row, column=6, value=df['CUSIP'].nunique()).font = label_font
 
 
-def run_scraper(ciks, output_path, limit=None, progress_cb=None):
+def run_scraper(ciks, output_path, limit=None, progress_cb=None, skipped_out=None):
     """Scrape 13F holdings for one or more CIKs and write Excel (+ HTML overlap
     report if 2+ funds produced data). Returns (funds, html_path) where funds is
     a list of (entity_name, DataFrame) tuples and html_path is str|None.
 
-    progress_cb, if given, is called with each log line instead of printing it.
+    limit is the number of most recent quarters *with usable holdings* per fund;
+    a newer filing with no holdings table (e.g. a cover-page-only amendment) is
+    passed over in favor of the next one. progress_cb, if given, is called with
+    each log line instead of printing it. skipped_out, if given, is a list that
+    receives (fund name, reason) for every fund that produced no data.
     """
     def log(msg):
         if progress_cb:
@@ -959,36 +964,56 @@ def run_scraper(ciks, output_path, limit=None, progress_cb=None):
         else:
             print(msg)
 
+    def skip(name, reason):
+        log(f'WARNING: {name}: {reason} -- skipping.')
+        if skipped_out is not None:
+            skipped_out.append((name, reason))
+
     funds = []
     for raw_cik in ciks:
         cik = raw_cik.strip().lstrip('0') or '0'
         log('=' * 56)
-        filings, entity_name = get_all_13f_filings(cik)
-        if limit:
-            filings = filings[-limit:]
-        log(f'Processing {len(filings)} filings for {entity_name}...')
+        try:
+            filings, entity_name = get_all_13f_filings(cik, dedupe=False)
+        except Exception as e:
+            skip(f'CIK {cik}', f'could not load filing list from EDGAR ({e})')
+            continue
+
+        by_quarter = {}
+        for f in sorted(filings, key=lambda x: x['filingDate'], reverse=True):
+            by_quarter.setdefault(quarter_label(f['filingDate']), []).append(f)
+        log(f'Processing {entity_name} ({len(by_quarter)} quarters on file)...')
 
         all_quarters = []
-        for i, filing in enumerate(filings, 1):
-            quarter = quarter_label(filing['filingDate'])
-            acc = filing['accessionNumber']
-            log(f'  [{i:>3}/{len(filings)}] {quarter}  ({filing["filingDate"]})')
-            xml_url = find_info_table_url(cik, acc)
-            if not xml_url:
-                log('    -> No info table found, skipping.')
-                continue
-            try:
-                holdings = parse_info_table(xml_url, filing_date=filing['filingDate'])
-                log(f'    -> {len(holdings)} positions')
-            except Exception as e:
-                log(f'    -> ERROR: {e}')
-                holdings = []
-            if holdings:
-                all_quarters.append((quarter, holdings))
-            time.sleep(0.5)
+        problems = []
+        for quarter, candidates in by_quarter.items():
+            if limit and len(all_quarters) >= limit:
+                break
+            for filing in candidates:
+                fdate = filing['filingDate']
+                log(f'  {quarter}  ({fdate})  {filing["form"]}')
+                xml_url = find_info_table_url(cik, filing['accessionNumber'])
+                if not xml_url:
+                    problems.append(f'{fdate}: no information table found')
+                    log('    -> No info table found.')
+                    time.sleep(0.5)
+                    continue
+                try:
+                    holdings = parse_info_table(xml_url, filing_date=fdate)
+                    log(f'    -> {len(holdings)} positions')
+                except Exception as e:
+                    problems.append(f'{fdate}: error reading information table ({e})')
+                    log(f'    -> ERROR: {e}')
+                    holdings = []
+                time.sleep(0.5)
+                if holdings:
+                    all_quarters.append((quarter, holdings))
+                    break
+                if not problems or not problems[-1].startswith(fdate):
+                    problems.append(f'{fdate}: information table had 0 positions')
 
         if not all_quarters:
-            log(f'WARNING: No holdings data for {entity_name}, skipping.')
+            skip(entity_name, '; '.join(problems) or 'no 13F-HR filings found')
             continue
 
         log(f'Building dataset from {len(all_quarters)} quarters...')

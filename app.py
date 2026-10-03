@@ -146,6 +146,7 @@ if run_clicked:
         if not fname.endswith('.xlsx'):
             fname += '.xlsx'
 
+        skipped = []
         with tempfile.TemporaryDirectory() as tmp:
             xlsx_path = os.path.join(tmp, fname)
             try:
@@ -155,6 +156,7 @@ if run_clicked:
                         xlsx_path,
                         limit=(limit or None),
                         progress_cb=progress_cb,
+                        skipped_out=skipped,
                     )
                 with open(xlsx_path, 'rb') as f:
                     xlsx_bytes = f.read()
@@ -168,8 +170,11 @@ if run_clicked:
                     'html_text': html_text,
                     'html_name': fname.replace('.xlsx', '.html'),
                     'fund_names': [name for name, _ in funds],
+                    'requested': len(ciks),
+                    'skipped': skipped,
+                    'log': '\n'.join(lines),
                 }
-                st.success(f'Done — {len(funds)} fund(s) processed.')
+                st.success(f'Done — {len(funds)} of {len(ciks)} fund(s) returned data.')
             except Exception as e:
                 st.error(f'Run failed: {e}')
 
@@ -177,6 +182,14 @@ result = st.session_state.result
 if result:
     st.subheader('Results')
     st.write(', '.join(result['fund_names']))
+
+    if result['skipped']:
+        st.warning(
+            f"{len(result['skipped'])} fund(s) returned no data and are NOT in the results:\n\n"
+            + '\n'.join(f'- **{name}** — {reason}' for name, reason in result['skipped'])
+        )
+    with st.expander('Full run log'):
+        st.code(result['log'], language=None)
 
     dl1, dl2 = st.columns(2)
     with dl1:
