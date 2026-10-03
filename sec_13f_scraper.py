@@ -947,6 +947,22 @@ def _add_summary_sheet(wb, funds):
         ws.cell(row=row, column=6, value=df['CUSIP'].nunique()).font = label_font
 
 
+def get_amendment_type(cik, accession):
+    """Return a 13F-HR/A's amendment type ('RESTATEMENT' or 'NEW HOLDINGS'), or None if unknown.
+
+    A NEW HOLDINGS amendment lists only positions to add to the original filing;
+    a RESTATEMENT replaces the original entirely.
+    """
+    acc_nodash = accession.replace('-', '')
+    url = f'https://www.sec.gov/Archives/edgar/data/{cik.zfill(10)}/{acc_nodash}/primary_doc.xml'
+    try:
+        r = _get_with_retry(url)
+        m = re.search(r'<(?:\w+:)?amendmentType>\s*([^<]+?)\s*</', r.text)
+        return m.group(1).upper() if m else None
+    except Exception:
+        return None
+
+
 def run_scraper(ciks, output_path, limit=None, progress_cb=None, skipped_out=None):
     """Scrape 13F holdings for one or more CIKs and write Excel (+ HTML overlap
     report if 2+ funds produced data). Returns (funds, html_path) where funds is
@@ -989,6 +1005,7 @@ def run_scraper(ciks, output_path, limit=None, progress_cb=None, skipped_out=Non
         for quarter, candidates in by_quarter.items():
             if limit and len(all_quarters) >= limit:
                 break
+            quarter_holdings = []
             for filing in candidates:
                 fdate = filing['filingDate']
                 log(f'  {quarter}  ({fdate})  {filing["form"]}')
@@ -1007,10 +1024,16 @@ def run_scraper(ciks, output_path, limit=None, progress_cb=None, skipped_out=Non
                     holdings = []
                 time.sleep(0.5)
                 if holdings:
-                    all_quarters.append((quarter, holdings))
+                    quarter_holdings.extend(holdings)
+                    if (filing['form'] == '13F-HR/A'
+                            and get_amendment_type(cik, filing['accessionNumber']) == 'NEW HOLDINGS'):
+                        log('    -> amendment lists only additional holdings; also reading the original filing')
+                        continue
                     break
                 if not problems or not problems[-1].startswith(fdate):
                     problems.append(f'{fdate}: information table had 0 positions')
+            if quarter_holdings:
+                all_quarters.append((quarter, quarter_holdings))
 
         if not all_quarters:
             skip(entity_name, '; '.join(problems) or 'no 13F-HR filings found')

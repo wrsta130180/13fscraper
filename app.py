@@ -32,7 +32,26 @@ COMMON_FUNDS = [
     ('LFL Advisers', '1694127'),
     ('Dorsal Capital Management', '1547007'),
     ('Merewether Investment Mgmt', '1736852'),
+    ('Sachem Cove', '1847935'),
+    ('Segra', '1607512'),
+    ('Baker Brothers', '1263508'),
+    ('Commodore', '1831942'),
+    ('Deep Track', '1856083'),
+    ('Fairmount', '1802528'),
+    ('Caligan', '1727492'),
+    ('Condire', '1847739'),
+    ('Sourcerock', '1822531'),
+    ('Goodlander', '2018973'),
+    ('Ripple Effect', '2031590'),
+    ('Gator', '1570284'),
+    ('Two Seas', '1823138'),
+    ('Robotti', '1105838'),
+    ('Plustick', '1643351'),
+    ('Highland Peak', '1961320'),
+    ('Crake', '1789082'),
+    ('Boardman Bay', '1602987'),
 ]
+COMMON_CIKS = {cik for _, cik in COMMON_FUNDS}
 
 
 def load_custom_funds():
@@ -69,7 +88,7 @@ with st.sidebar:
     st.header('Tracked funds')
     st.caption('Shared list — anyone using this app can add to it.')
 
-    all_tracked = COMMON_FUNDS + [tuple(f) for f in st.session_state.custom_funds]
+    all_tracked = COMMON_FUNDS + [tuple(f) for f in st.session_state.custom_funds if f[1] not in COMMON_CIKS]
 
     with st.form('add_fund_form', clear_on_submit=True):
         new_name = st.text_input('Manager name')
@@ -104,7 +123,7 @@ with st.sidebar:
 
 st.subheader('Run analysis')
 
-all_tracked = COMMON_FUNDS + [tuple(f) for f in st.session_state.custom_funds]
+all_tracked = COMMON_FUNDS + [tuple(f) for f in st.session_state.custom_funds if f[1] not in COMMON_CIKS]
 labels = [f'{name} ({cik})' for name, cik in all_tracked]
 label_to_cik = {f'{name} ({cik})': cik for name, cik in all_tracked}
 
