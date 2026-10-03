@@ -117,7 +117,8 @@ extra_ciks_text = st.text_area(
 col1, col2 = st.columns(2)
 with col1:
     limit = st.number_input(
-        'Limit to N most recent filings per fund (0 = all)', min_value=0, value=0, step=1
+        'Number of quarters', min_value=1, value=1, step=1,
+        help='Fetches this many of each fund\'s most recent quarterly 13F filings.',
     )
 with col2:
     output_name = st.text_input('Output file name', value='fund_overlap')
