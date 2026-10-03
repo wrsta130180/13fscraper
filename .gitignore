@@ -7,3 +7,5 @@ __pycache__/
 # Shared tracked-fund list — keep this out of any public/shared repo by default;
 # it reflects internal research targets, not just sample config.
 data/custom_funds.json
+data/*.migrated
+data/*.tmp

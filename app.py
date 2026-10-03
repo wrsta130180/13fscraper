@@ -21,57 +21,42 @@ import streamlit as st
 import sec_13f_scraper as scraper
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
-CUSTOM_FUNDS_FILE = os.path.join(DATA_DIR, 'custom_funds.json')
-
-COMMON_FUNDS = [
-    ('Praetorian PR LLC', '1949877'),
-    ('Carronade Capital Management', '1866872'),
-    ('TCI Fund Management', '1647251'),
-    ('CastleKnight Management', '1835751'),
-    ('Naya Capital Management', '1665012'),
-    ('LFL Advisers', '1694127'),
-    ('Dorsal Capital Management', '1547007'),
-    ('Merewether Investment Mgmt', '1736852'),
-    ('Sachem Cove', '1847935'),
-    ('Segra', '1607512'),
-    ('Baker Brothers', '1263508'),
-    ('Commodore', '1831942'),
-    ('Deep Track', '1856083'),
-    ('Fairmount', '1802528'),
-    ('Caligan', '1727492'),
-    ('Condire', '1847739'),
-    ('Sourcerock', '1822531'),
-    ('Goodlander', '2018973'),
-    ('Ripple Effect', '2031590'),
-    ('Gator', '1570284'),
-    ('Two Seas', '1823138'),
-    ('Robotti', '1105838'),
-    ('Plustick', '1643351'),
-    ('Highland Peak', '1961320'),
-    ('Crake', '1789082'),
-    ('Boardman Bay', '1602987'),
-]
-COMMON_CIKS = {cik for _, cik in COMMON_FUNDS}
+FUNDS_FILE = os.path.join(DATA_DIR, 'funds.json')
+LEGACY_CUSTOM_FILE = os.path.join(DATA_DIR, 'custom_funds.json')
 
 
-def load_custom_funds():
+def _read_json_list(path):
     try:
-        with open(CUSTOM_FUNDS_FILE, 'r') as f:
-            return json.load(f)
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return [[str(n), str(c)] for n, c in data]
     except Exception:
         return []
 
 
-def save_custom_funds(funds):
-    os.makedirs(DATA_DIR, exist_ok=True)
-    with open(CUSTOM_FUNDS_FILE, 'w') as f:
-        json.dump(funds, f, indent=2)
+def load_funds():
+    """The single shared fund list: a JSON array of [name, cik] pairs in data/funds.json."""
+    funds = _read_json_list(FUNDS_FILE)
+    # One-time migration of funds added under the old "custom funds" scheme.
+    legacy = _read_json_list(LEGACY_CUSTOM_FILE)
+    if legacy:
+        known = {c for _, c in funds}
+        funds += [f for f in legacy if f[1] not in known]
+        save_funds(funds)
+        os.replace(LEGACY_CUSTOM_FILE, LEGACY_CUSTOM_FILE + '.migrated')
+    return funds
 
+
+def save_funds(funds):
+    os.makedirs(DATA_DIR, exist_ok=True)
+    tmp = FUNDS_FILE + '.tmp'
+    with open(tmp, 'w', encoding='utf-8', newline='\n') as f:
+        json.dump(funds, f, indent=2)
+        f.write('\n')
+    os.replace(tmp, FUNDS_FILE)
 
 st.set_page_config(page_title='13F Fund Analyzer', layout='wide')
 
-if 'custom_funds' not in st.session_state:
-    st.session_state.custom_funds = load_custom_funds()
 if 'log_lines' not in st.session_state:
     st.session_state.log_lines = []
 if 'result' not in st.session_state:
@@ -85,10 +70,12 @@ st.caption(
 )
 
 with st.sidebar:
-    st.header('Tracked funds')
-    st.caption('Shared list — anyone using this app can add to it.')
-
-    all_tracked = COMMON_FUNDS + [tuple(f) for f in st.session_state.custom_funds if f[1] not in COMMON_CIKS]
+    funds_list = load_funds()
+    st.header('Built-in funds')
+    st.caption(
+        'Funds you add here are saved to the built-in list for everyone using this app, '
+        'until you remove them.'
+    )
 
     with st.form('add_fund_form', clear_on_submit=True):
         new_name = st.text_input('Manager name')
@@ -97,36 +84,37 @@ with st.sidebar:
         if submitted:
             name = new_name.strip()
             cik = new_cik.strip().lstrip('0') or '0'
-            if not (name and cik):
+            if not (name and new_cik.strip()):
                 st.error('Enter both a manager name and CIK.')
-            elif any(c == cik for _, c in all_tracked):
+            elif not cik.isdigit():
+                st.error('CIK must be a number.')
+            elif any(c == cik for _, c in funds_list):
                 st.warning(f'CIK {cik} is already in the list.')
             else:
-                st.session_state.custom_funds.append([name, cik])
-                save_custom_funds(st.session_state.custom_funds)
+                save_funds(funds_list + [[name, cik]])
                 st.rerun()
 
     st.divider()
-    st.caption('Built-in funds')
-    for name, cik in COMMON_FUNDS:
-        st.text(f'{name}  ({cik})')
+    with st.expander(f'Remove funds ({len(funds_list)} in list)'):
+        remove_labels = st.multiselect(
+            'Select funds to remove',
+            [f'{n} ({c})' for n, c in funds_list],
+            key='remove_select',
+        )
+        if st.button('Remove selected', disabled=not remove_labels):
+            gone = set(remove_labels)
+            save_funds([[n, c] for n, c in funds_list if f'{n} ({c})' not in gone])
+            st.session_state.pop('remove_select', None)
+            st.rerun()
 
-    if st.session_state.custom_funds:
-        st.caption('Custom tracked funds')
-        for i, (name, cik) in enumerate(st.session_state.custom_funds):
-            col1, col2 = st.columns([5, 1])
-            col1.text(f'{name}  ({cik})')
-            if col2.button('✕', key=f'remove_{i}', help='Remove'):
-                st.session_state.custom_funds.pop(i)
-                save_custom_funds(st.session_state.custom_funds)
-                st.rerun()
+    for name, cik in funds_list:
+        st.text(f'{name}  ({cik})')
 
 st.subheader('Run analysis')
 
-all_tracked = COMMON_FUNDS + [tuple(f) for f in st.session_state.custom_funds if f[1] not in COMMON_CIKS]
+all_tracked = [tuple(f) for f in funds_list]
 labels = [f'{name} ({cik})' for name, cik in all_tracked]
 label_to_cik = {f'{name} ({cik})': cik for name, cik in all_tracked}
-
 selected_labels = st.multiselect('Select tracked funds to include', labels)
 extra_ciks_text = st.text_area(
     'Additional CIKs (optional — comma, space, or newline separated)',
