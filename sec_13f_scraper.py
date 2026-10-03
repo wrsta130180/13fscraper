@@ -468,8 +468,6 @@ def _add_common_holdings_sheet(wb, funds):
 
     held_col_letters = [get_column_letter(flag_col_start + i * 2) for i in range(n_funds)]
 
-    sel_range = f'$B${selector_start}:$B${selector_end}'
-
     df['_total'] = df[[f'{fn}_held' for fn in fund_names]].sum(axis=1)
 
     df = df.sort_values(['Year', '_total'], ascending=[True, False]).drop(columns=['_total'])
@@ -482,12 +480,9 @@ def _add_common_holdings_sheet(wb, funds):
         ws.cell(row=r, column=2, value=data_row['CUSIP']).font = body_font
         ws.cell(row=r, column=3, value=data_row['Security Name']).font = body_font
 
-        held_range = f'{held_col_letters[0]}{r}:{held_col_letters[-1]}{r}'
-
-        held_refs = ','.join(f'{l}{r}' for l in held_col_letters)
-        formula = (
-            '=SUMPRODUCT((' + sel_range + '="YES")*(' +
-            '+'.join(f'{l}{r}' for l in held_col_letters) + '))'
+        formula = '=' + '+'.join(
+            f'($B${selector_start + i}="YES")*{l}{r}'
+            for i, l in enumerate(held_col_letters)
         )
 
         count_cell = ws.cell(row=r, column=4, value=formula)
@@ -554,15 +549,21 @@ def generate_html_report(funds, output_path):
 
     years = sorted(df['Year'].unique())
 
+    held_cols = [f'{fn}_held' for fn in fund_names]
+
+    # Keep every security held by 2+ funds in any year (the report only displays
+    # overlaps). No top-N cut: truncating let selection order decide which funds
+    # appeared at all.
+    funds_per_cusip = df.groupby('CUSIP')[held_cols].max().sum(axis=1)
+    overlapping = set(funds_per_cusip[funds_per_cusip >= 2].index)
+
     data_by_year = {}
     for year in years:
-        ydf = df[df['Year'] == year].copy()
-
-        held_cols = [f'{fn}_held' for fn in fund_names]
+        ydf = df[(df['Year'] == year) & df['CUSIP'].isin(overlapping)].copy()
 
         ydf['_total'] = ydf[held_cols].sum(axis=1)
 
-        ydf = ydf[ydf['_total'] >= 1].sort_values('_total', ascending=False).head(30)
+        ydf = ydf[ydf['_total'] >= 1].sort_values('_total', ascending=False, kind='stable')
 
         data_by_year[year] = [
             {
